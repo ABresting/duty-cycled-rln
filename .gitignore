@@ -1,0 +1,14 @@
+# upstream checkouts (cloned at pinned commits; see READMEs)
+circuits/circom-rln/
+zerokit-bench/zerokit/
+folding/nova/
+# generated artifacts and build outputs
+zerokit-bench/artifacts/
+zerokit-bench/tools/circom*
+zerokit-bench/tools/ark-zkey/
+target/
+node_modules/
+# testbed runtime state
+testbed/waku/.run/
+testbed/waku/bin/
+model/out/

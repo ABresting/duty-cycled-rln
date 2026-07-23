@@ -1,0 +1,123 @@
+diff --git a/rln/Cargo.toml b/rln/Cargo.toml
+index eec53b9..e4df101 100644
+--- a/rln/Cargo.toml
++++ b/rln/Cargo.toml
+@@ -110,3 +110,28 @@ required-features = ["headers"] # Do not build unless generating headers.
+ [[bin]]
+ name = "test_refactors"
+ required-features = ["refactors"]
++
++[[bench]]
++name = "batch_vs_single"
++harness = false
++required-features = ["pmtree-ft"]
++
++[[bench]]
++name = "three_methods"
++harness = false
++required-features = ["pmtree-ft"]
++
++[[bench]]
++name = "variants"
++harness = false
++required-features = ["pmtree-ft"]
++
++[[bench]]
++name = "bursts"
++harness = false
++required-features = ["pmtree-ft"]
++
++[[bench]]
++name = "verify"
++harness = false
++required-features = ["pmtree-ft"]
+diff --git a/rln/src/circuit/mod.rs b/rln/src/circuit/mod.rs
+index 73e98b0..84769e4 100644
+--- a/rln/src/circuit/mod.rs
++++ b/rln/src/circuit/mod.rs
+@@ -366,3 +366,85 @@ mod test {
+         assert!(matches!(err, GraphReadError::MaxOutMismatch { .. }));
+     }
+ }
++
++// ============================================================================
++// BENCH HELPER (added for the batching benchmarks).
++// Proves an arbitrary RLN-family circuit from a NAMED INPUT LIST in which any
++// signal (notably `x`) may be an ARRAY. This lets us run our distinct-x_i
++// Batched circuit on zerokit's exact proving stack (iden3 graph witness calc
++// + ark-groth16), alongside the shipped single-x multi-burn, for apples-to-apples
++// batching benchmarks. Public so external benches can call it.
++// ============================================================================
++pub fn prove_from_named_inputs(
++    named_inputs: Vec<(String, Vec<Fr>)>,
++    graph: &Graph,
++    zkey: &Zkey,
++) -> Proof {
++    use crate::utils::FrOrSecret;
++    use ark_std::UniformRand;
++    let inputs: Vec<(String, Vec<FrOrSecret>)> = named_inputs
++        .into_iter()
++        .map(|(k, vs)| (k, vs.into_iter().map(FrOrSecret::from).collect()))
++        .collect();
++    let full_assignment = iden3calc::calc_witness(inputs, graph).expect("witness calc failed");
++    let mut rng = ark_std::rand::thread_rng();
++    let r = Fr::rand(&mut rng);
++    let s = Fr::rand(&mut rng);
++    ark_groth16::Groth16::<_, qap::CircomReduction>::create_proof_with_reduction_and_matrices(
++        &zkey.0,
++        r,
++        s,
++        &zkey.1,
++        zkey.1.num_instance_variables,
++        zkey.1.num_constraints,
++        &full_assignment,
++    )
++    .expect("groth16 prove failed")
++}
++
++// ============================================================================
++// VERIFY HELPERS (added for the verification benchmark, 2026-07-14).
++// Same proving path as prove_from_named_inputs, but also returns the public
++// input vector (witness prefix), so a relayer-side Groth16 verification can be
++// benchmarked against the exact proof a gateway would publish.
++// ============================================================================
++pub fn prove_with_publics_from_named_inputs(
++    named_inputs: Vec<(String, Vec<Fr>)>,
++    graph: &Graph,
++    zkey: &Zkey,
++) -> (Proof, Vec<Fr>) {
++    use crate::utils::FrOrSecret;
++    use ark_std::UniformRand;
++    let inputs: Vec<(String, Vec<FrOrSecret>)> = named_inputs
++        .into_iter()
++        .map(|(k, vs)| (k, vs.into_iter().map(FrOrSecret::from).collect()))
++        .collect();
++    let full_assignment = iden3calc::calc_witness(inputs, graph).expect("witness calc failed");
++    let publics = full_assignment[1..zkey.1.num_instance_variables].to_vec();
++    let mut rng = ark_std::rand::thread_rng();
++    let r = Fr::rand(&mut rng);
++    let s = Fr::rand(&mut rng);
++    let proof = ark_groth16::Groth16::<_, qap::CircomReduction>::create_proof_with_reduction_and_matrices(
++        &zkey.0,
++        r,
++        s,
++        &zkey.1,
++        zkey.1.num_instance_variables,
++        zkey.1.num_constraints,
++        &full_assignment,
++    )
++    .expect("groth16 prove failed");
++    (proof, publics)
++}
++
++pub fn prepared_vk(zkey: &Zkey) -> ark_groth16::PreparedVerifyingKey<Curve> {
++    ark_groth16::prepare_verifying_key(&zkey.0.vk)
++}
++
++pub fn verify_with_prepared_vk(
++    pvk: &ark_groth16::PreparedVerifyingKey<Curve>,
++    proof: &Proof,
++    publics: &[Fr],
++) -> bool {
++    ark_groth16::Groth16::<Curve>::verify_proof(pvk, proof, publics).expect("verify failed")
++}
