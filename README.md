@@ -61,12 +61,12 @@ the pipeline stages run strictly in sequence and each writes its CSV into
 
 | Paper element | How to reproduce |
 |---|---|
-| Proving and verification costs, amortization (Sec. 7.1) | `bench-kit/run-benchmarks.sh`, stages 1--3 |
+| Proving and verification costs, amortization (Sec. 6.3) | `bench-kit/run-benchmarks.sh`, stages 1--3 |
 | Constraint counts (Table 2) | compile the circuits with `zerokit-bench/build-artifacts.sh`; counts are deterministic |
-| Whole-burst runs (Sec. 7.2) | `bench-kit/run-benchmarks.sh`, stage 4; set `ALL_BURST_CAPACITIES=1` for the k=16/32 families as well |
-| Folding (Sec. 7.3) | `folding/run-fold-sweep.sh B K1,K2` after building the Nova example |
-| Transport and packaging (Sec. 7.4) | `testbed/waku/node.sh up 5`, then `testbed/experiments/packaging.py` and `envelope_probe.py` |
-| Feasibility table (Table 3) | `node model/model.mjs` |
+| Whole-burst runs (Sec. 6.4) | `bench-kit/run-benchmarks.sh`, stage 4; set `ALL_BURST_CAPACITIES=1` for the k=16/32 families as well |
+| Folding (Sec. 6.5) | `folding/run-fold-sweep.sh B K1,K2` after building the Nova example |
+| Transport and packaging (Sec. 6.6) | `testbed/waku/node.sh up 5`, then `testbed/experiments/packaging.py` and `envelope_probe.py` |
+| Feasibility table (Table 3, Sec. 6.7) | `node model/model.mjs` |
 
 Every benchmark stage writes a CSV with the host, CPU, sample count, and date
 in its header, directly comparable to the tables in the paper.
