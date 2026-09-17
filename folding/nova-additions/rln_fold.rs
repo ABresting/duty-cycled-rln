@@ -1,21 +1,22 @@
-//! Route B (folding) — fold an N-message RLN burst into ONE constant-size proof with
-//! CONSTANT verify time and CONSTANT proof size, regardless of N. This is the scaling /
-//! on-chain variant: the Groth16 batch exposes N message hashes as public inputs, so
-//! its verify grows with N; folding hides every message inside the recursion.
+//! Folded proofs (paper Section 5.4) — fold a burst of B messages into ONE constant-size
+//! proof with CONSTANT verify time and CONSTANT proof size, regardless of B. This is the
+//! scaling / on-chain variant: the Groth16 batch exposes k message hashes as public
+//! inputs, so its verify grows with k; folding hides every message inside the recursion.
 //!
-//! Each fold step includes the full membership check of the batched circuit:
-//!   identityCommitment = Poseidon(secret)
-//!   rateCommitment     = Poseidon(identityCommitment, limit)
-//!   climb 20-level Merkle path from rateCommitment; enforce == root (carried in state)
-//!   a1 = Poseidon(secret, ext_null, message_id);  y = secret + a1*x;  nullifier = Poseidon(a1)
-//!   acc' = Poseidon(acc, nullifier, x, y)          // accumulate the audit commitment
-//! State z = [root, ext_null, acc]. z_0 = [known_group_root, H(epoch, app), 0]: the verifier
-//! supplies BOTH the group root and the external nullifier it derives from the batch's
-//! cleartext epoch — Waku's freshness rule (|now - epoch| <= g) is only sound if the epoch
-//! is cryptographically bound into the proof; carrying ext_null as a private witness would
-//! let a captured batch be replayed after nullifier-cache eviction.
-//! After N steps, CompressedSNARK -> one constant proof; the network reveals the N
-//! (nullifier, x, y) triples and checks they recompute acc (audit) + against the global
+//! Each fold step includes the full membership check of the batched circuit
+//! (Section 5.1) plus the accumulator of Equation (fold):
+//!   identityCommitment = Poseidon(a0)
+//!   R                  = Poseidon(identityCommitment, Qs)
+//!   climb 20-level Merkle path from R; enforce == r (carried in state)
+//!   a1 = Poseidon(a0, e, j);  y = a0 + a1*x;  nf = Poseidon(a1)
+//!   acc' = Poseidon(acc, nf, x, y)          // accumulate the audit commitment
+//! State z = [r, e, acc] (Equation fold). z_0 = [known_group_root, H(epoch, app), 0]: the
+//! verifier supplies BOTH the group root and the external nullifier it derives from the
+//! batch's cleartext epoch — Waku's freshness rule (|now - epoch| <= g) is only sound if
+//! the epoch is cryptographically bound into the proof; carrying e as a private witness
+//! would let a captured batch be replayed after nullifier-cache eviction.
+//! After m steps, CompressedSNARK -> one constant proof; the network reveals the B
+//! (nf, x, y) triples and checks they recompute acc (audit) + against the global
 //! epoch nullifier set (cross-batch reuse -> slash, as in the batched scheme).
 //!
 //! Run: cargo run --release --example rln_fold --features test-utils
@@ -87,16 +88,16 @@ fn poseidon_native(inputs: &[Fr]) -> Fr {
 
 #[derive(Clone, Debug)]
 struct RlnStep<G: Group> {
-  secret: G::Scalar,
-  limit: G::Scalar,
-  message_ids: Vec<G::Scalar>,  // K messages folded per step (batched folding)
-  xs: Vec<G::Scalar>,           // K message hashes
-  path: Vec<G::Scalar>,         // Merkle siblings (len DEPTH) — climbed ONCE per step
+  a0: G::Scalar,
+  Qs: G::Scalar,
+  j: Vec<G::Scalar>,             // k slot indices folded per step (batched folding)
+  x: Vec<G::Scalar>,             // k message hashes
+  pathElements: Vec<G::Scalar>,  // Merkle siblings (len DEPTH) — climbed ONCE per step
 }
 
 impl<G: Group> StepCircuit<G::Scalar> for RlnStep<G> {
   fn arity(&self) -> usize {
-    3 // [root, ext_null, acc]
+    3 // [r, e, acc]
   }
 
   fn synthesize<CS: ConstraintSystem<G::Scalar>>(
@@ -104,70 +105,69 @@ impl<G: Group> StepCircuit<G::Scalar> for RlnStep<G> {
     cs: &mut CS,
     z_in: &[AllocatedNum<G::Scalar>],
   ) -> Result<Vec<AllocatedNum<G::Scalar>>, SynthesisError> {
-    let root_in = z_in[0].clone();
-    // ext_null comes from the PUBLIC state (verifier derives it from the cleartext epoch),
+    let r_in = z_in[0].clone();
+    // e comes from the PUBLIC state (verifier derives it from the cleartext epoch),
     // not from a private witness — this binds the whole batch to the epoch (replay protection).
-    let ext_null = z_in[1].clone();
+    let e = z_in[1].clone();
     let acc_in = z_in[2].clone();
 
-    let secret = AllocatedNum::alloc(cs.namespace(|| "secret"), || Ok(self.secret))?;
-    let limit = AllocatedNum::alloc(cs.namespace(|| "limit"), || Ok(self.limit))?;
-    // membership: rateCommitment climbs the Merkle path to the group root
-    let id_comm = poseidon_hash::<G, _>(cs, "idcomm", &[secret.clone()])?;
-    let mut cur = poseidon_hash::<G, _>(cs, "ratecomm", &[id_comm, limit])?;
+    let a0 = AllocatedNum::alloc(cs.namespace(|| "a0"), || Ok(self.a0))?;
+    let Qs = AllocatedNum::alloc(cs.namespace(|| "Qs"), || Ok(self.Qs))?;
+    // membership: R climbs the Merkle path to the group root
+    let id_comm = poseidon_hash::<G, _>(cs, "idcomm", &[a0.clone()])?;
+    let mut cur = poseidon_hash::<G, _>(cs, "R", &[id_comm, Qs])?;
     for d in 0..DEPTH {
-      let sib = AllocatedNum::alloc(cs.namespace(|| format!("sib{d}")), || Ok(self.path[d]))?;
+      let sib = AllocatedNum::alloc(cs.namespace(|| format!("sib{d}")), || Ok(self.pathElements[d]))?;
       cur = poseidon_hash::<G, _>(cs, &format!("lvl{d}"), &[cur, sib])?; // index 0 => left child
     }
     cs.enforce(
       || "climbed root == group root",
       |lc| lc + cur.get_variable(),
       |lc| lc + CS::one(),
-      |lc| lc + root_in.get_variable(),
+      |lc| lc + r_in.get_variable(),
     );
 
-    // K messages per step (the batched relation inside the fold step):
+    // k messages per step (the batched relation inside the fold step):
     // membership was climbed once above; each message adds share+nullifier+acc only.
     let mut acc = acc_in;
-    for (i, (mid, xv)) in self.message_ids.iter().zip(self.xs.iter()).enumerate() {
-      let message_id =
-        AllocatedNum::alloc(cs.namespace(|| format!("mid{i}")), || Ok(*mid))?;
+    for (i, (jv, xv)) in self.j.iter().zip(self.x.iter()).enumerate() {
+      let j = AllocatedNum::alloc(cs.namespace(|| format!("j{i}")), || Ok(*jv))?;
       let x = AllocatedNum::alloc(cs.namespace(|| format!("x{i}")), || Ok(*xv))?;
       let a1 =
-        poseidon_hash::<G, _>(cs, &format!("a1_{i}"), &[secret.clone(), ext_null.clone(), message_id])?;
+        poseidon_hash::<G, _>(cs, &format!("a1_{i}"), &[a0.clone(), e.clone(), j])?;
       let a1x = a1.mul(cs.namespace(|| format!("a1x{i}")), &x)?;
       let y = AllocatedNum::alloc(cs.namespace(|| format!("y{i}")), || {
-        Ok(secret.get_value().unwrap() + a1x.get_value().unwrap())
+        Ok(a0.get_value().unwrap() + a1x.get_value().unwrap())
       })?;
       cs.enforce(
-        || format!("y{i} = secret + a1*x"),
-        |lc| lc + secret.get_variable() + a1x.get_variable(),
+        || format!("y{i} = a0 + a1*x"),
+        |lc| lc + a0.get_variable() + a1x.get_variable(),
         |lc| lc + CS::one(),
         |lc| lc + y.get_variable(),
       );
-      let nullifier = poseidon_hash::<G, _>(cs, &format!("null{i}"), &[a1])?;
-      acc = poseidon_hash::<G, _>(cs, &format!("acc{i}"), &[acc, nullifier, x, y])?;
+      let nf = poseidon_hash::<G, _>(cs, &format!("nf{i}"), &[a1])?;
+      acc = poseidon_hash::<G, _>(cs, &format!("acc{i}"), &[acc, nf, x, y])?;
     }
-    Ok(vec![root_in, ext_null, acc])
+    Ok(vec![r_in, e, acc])
   }
 }
 
 fn main() {
   type C = RlnStep<<E1 as Engine>::GE>;
 
-  let secret = Fr::from(987654321u64);
-  let limit = Fr::from(100u64);
-  let ext_null = Fr::from(424242u64);
+  let a0 = Fr::from(987654321u64);
+  let Qs = Fr::from(100u64);
+  let e = Fr::from(424242u64);
 
   // native group root for the test member (leaf index 0 => all-zero siblings)
-  let id_comm = poseidon_native(&[secret]);
-  let rate_comm = poseidon_native(&[id_comm, limit]);
-  let mut root = rate_comm;
+  let id_comm = poseidon_native(&[a0]);
+  let R = poseidon_native(&[id_comm, Qs]);
+  let mut r = R;
   for _ in 0..DEPTH {
-    root = poseidon_native(&[root, Fr::ZERO]);
+    r = poseidon_native(&[r, Fr::ZERO]);
   }
 
-  println!("# Batched folding — batched RLN relation (K msgs/step) inside Nova; membership once per step");
+  println!("# Folded proofs — batched RLN relation (k msgs/step) inside Nova; membership once per step");
   println!("total_msgs,K,steps,e2e_prove_ms,e2e_ms_per_msg,fold_loop_ms,compress_ms,proof_bytes,verify_ms");
 
   let total_msgs: usize = std::env::args().nth(1).and_then(|a| a.parse().ok()).unwrap_or(8);
@@ -179,17 +179,17 @@ fn main() {
     let n = total_msgs / k; // number of fold steps
     let circuits: Vec<C> = (0..n)
       .map(|s_i| RlnStep {
-        secret,
-        limit,
-        message_ids: (0..k).map(|j| Fr::from((s_i * k + j + 1) as u64)).collect(),
-        xs: (0..k).map(|j| Fr::from((1000 + s_i * k + j) as u64)).collect(),
-        path: vec![Fr::ZERO; DEPTH],
+        a0,
+        Qs,
+        j: (0..k).map(|jj| Fr::from((s_i * k + jj + 1) as u64)).collect(),
+        x: (0..k).map(|jj| Fr::from((1000 + s_i * k + jj) as u64)).collect(),
+        pathElements: vec![Fr::ZERO; DEPTH],
       })
       .collect();
 
     let pp = PublicParams::<E1, E2, C>::setup(&circuits[0], &*S1::ck_floor(), &*S2::ck_floor())
       .unwrap();
-    let z0 = vec![root, ext_null, Fr::ZERO];
+    let z0 = vec![r, e, Fr::ZERO];
     let mut rs: RecursiveSNARK<E1, E2, C> =
       RecursiveSNARK::<E1, E2, C>::new(&pp, &circuits[0], &z0).unwrap();
 
@@ -206,9 +206,9 @@ fn main() {
     let comp_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     let bytes = {
-      let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
-      bincode::serde::encode_into_std_write(&comp, &mut e, bincode::config::legacy()).unwrap();
-      e.finish().unwrap().len()
+      let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+      bincode::serde::encode_into_std_write(&comp, &mut enc, bincode::config::legacy()).unwrap();
+      enc.finish().unwrap().len()
     };
 
     let steps = rs.num_steps();

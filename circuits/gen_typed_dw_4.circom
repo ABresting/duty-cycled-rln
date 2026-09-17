@@ -4,43 +4,43 @@ include "../node_modules/circomlib/circuits/poseidon.circom";
 include "../node_modules/circomlib/circuits/comparators.circom";
 
 template RLNTypedDW(DEPTH, LIMIT_BIT_SIZE, MAX_OUT) {
-    signal input identitySecret;
-    signal input rateCommitmentLimits;      // H of the per-class limit table, bound in rateCommitment
-    signal input classId[MAX_OUT];          // small class index per slot (0..255)
-    signal input classLimit[MAX_OUT];       // the class's short-window budget for this slot
-    signal input messageId[MAX_OUT];
+    signal input a0;
+    signal input rateCommitmentLimits;      // H of the per-class limit table, bound in R
+    signal input c[MAX_OUT];                // small class index per slot (0..255)
+    signal input Qc[MAX_OUT];               // the class's short-window budget for this slot
+    signal input j[MAX_OUT];
     signal input pathElements[DEPTH];
     signal input identityPathIndex[DEPTH];
     signal input x[MAX_OUT];
-    signal input extNull[MAX_OUT];          // per-slot H(epoch, app, class) — public
-    signal input messageIdLong[MAX_OUT];
-    signal input classLimitLong[MAX_OUT];
-    signal input extNullLong[MAX_OUT];
-    signal input selectorUsed[MAX_OUT];
+    signal input e[MAX_OUT];                // per-slot H(epoch, app, class) — public
+    signal input jLong[MAX_OUT];
+    signal input QcLong[MAX_OUT];
+    signal input eLong[MAX_OUT];
+    signal input s[MAX_OUT];
     signal output y[MAX_OUT];
-    signal output root;
-    signal output nullifier[MAX_OUT];
+    signal output r;
+    signal output nf[MAX_OUT];
     signal output yLong[MAX_OUT];
-    signal output nullifierLong[MAX_OUT];
+    signal output nfLong[MAX_OUT];
 
-    signal identityCommitment <== Poseidon(1)([identitySecret]);
+    signal identityCommitment <== Poseidon(1)([a0]);
     // limits table committed once (its correctness/audit is a relayer-side concern)
-    signal rateCommitment <== Poseidon(2)([identityCommitment, rateCommitmentLimits]);
-    root <== MerkleTreeInclusionProof(DEPTH)(rateCommitment, identityPathIndex, pathElements);
+    signal R <== Poseidon(2)([identityCommitment, rateCommitmentLimits]);
+    r <== MerkleTreeInclusionProof(DEPTH)(R, identityPathIndex, pathElements);
 
     var selectorSumVar = 0;
-    for (var i = 0; i < MAX_OUT; i++) { selectorSumVar += selectorUsed[i]; }
+    for (var i = 0; i < MAX_OUT; i++) { selectorSumVar += s[i]; }
     signal selectorSum <== selectorSumVar;
     signal noActiveSelector <== IsZero()(selectorSum);
     noActiveSelector === 0;
 
     // short-window per-class range + packed (class,id) monotonic dedup
     for (var i = 0; i < MAX_OUT; i++) {
-        ConditionalRangeCheck(LIMIT_BIT_SIZE)(messageId[i], classLimit[i], selectorUsed[i]);
+        ConditionalRangeCheck(LIMIT_BIT_SIZE)(j[i], Qc[i], s[i]);
     }
     signal packed[MAX_OUT];
     for (var i = 0; i < MAX_OUT; i++) {
-        packed[i] <== classId[i] * 65536 + messageId[i];
+        packed[i] <== c[i] * 65536 + j[i];
     }
     signal incr[MAX_OUT > 0 ? MAX_OUT - 1 : 0];
     for (var i = 0; i + 1 < MAX_OUT; i++) {
@@ -49,11 +49,11 @@ template RLNTypedDW(DEPTH, LIMIT_BIT_SIZE, MAX_OUT) {
     }
     // long-window per-class range + packed monotonic dedup
     for (var i = 0; i < MAX_OUT; i++) {
-        ConditionalRangeCheck(LIMIT_BIT_SIZE)(messageIdLong[i], classLimitLong[i], selectorUsed[i]);
+        ConditionalRangeCheck(LIMIT_BIT_SIZE)(jLong[i], QcLong[i], s[i]);
     }
     signal packedL[MAX_OUT];
     for (var i = 0; i < MAX_OUT; i++) {
-        packedL[i] <== classId[i] * 65536 + messageIdLong[i];
+        packedL[i] <== c[i] * 65536 + jLong[i];
     }
     signal incrL[MAX_OUT > 0 ? MAX_OUT - 1 : 0];
     for (var i = 0; i + 1 < MAX_OUT; i++) {
@@ -63,21 +63,21 @@ template RLNTypedDW(DEPTH, LIMIT_BIT_SIZE, MAX_OUT) {
 
     signal a1[MAX_OUT];
     signal yUnmasked[MAX_OUT];
-    signal nullifierUnmasked[MAX_OUT];
+    signal nfUnmasked[MAX_OUT];
     signal a1L[MAX_OUT];
     signal yUnmaskedL[MAX_OUT];
-    signal nullifierUnmaskedL[MAX_OUT];
+    signal nfUnmaskedL[MAX_OUT];
     for (var i = 0; i < MAX_OUT; i++) {
-        a1[i] <== Poseidon(3)([identitySecret, extNull[i], messageId[i]]);
-        yUnmasked[i] <== identitySecret + a1[i] * x[i];
-        nullifierUnmasked[i] <== Poseidon(1)([a1[i]]);
-        y[i] <== selectorUsed[i] * yUnmasked[i];
-        nullifier[i] <== selectorUsed[i] * nullifierUnmasked[i];
-        a1L[i] <== Poseidon(3)([identitySecret, extNullLong[i], messageIdLong[i]]);
-        yUnmaskedL[i] <== identitySecret + a1L[i] * x[i];
-        nullifierUnmaskedL[i] <== Poseidon(1)([a1L[i]]);
-        yLong[i] <== selectorUsed[i] * yUnmaskedL[i];
-        nullifierLong[i] <== selectorUsed[i] * nullifierUnmaskedL[i];
+        a1[i] <== Poseidon(3)([a0, e[i], j[i]]);
+        yUnmasked[i] <== a0 + a1[i] * x[i];
+        nfUnmasked[i] <== Poseidon(1)([a1[i]]);
+        y[i] <== s[i] * yUnmasked[i];
+        nf[i] <== s[i] * nfUnmasked[i];
+        a1L[i] <== Poseidon(3)([a0, eLong[i], jLong[i]]);
+        yUnmaskedL[i] <== a0 + a1L[i] * x[i];
+        nfUnmaskedL[i] <== Poseidon(1)([a1L[i]]);
+        yLong[i] <== s[i] * yUnmaskedL[i];
+        nfLong[i] <== s[i] * nfUnmaskedL[i];
     }
 }
-component main { public [x, extNull, extNullLong, selectorUsed] } = RLNTypedDW(20, 16, 4);
+component main { public [x, e, eLong, s] } = RLNTypedDW(20, 16, 4);

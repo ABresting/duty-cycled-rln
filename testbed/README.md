@@ -1,7 +1,7 @@
 # Transport testbed
 
 A local cluster of unmodified nwaku nodes for the transport measurements of
-Section 7.4 of the paper: per-message wire framing, one-envelope versus
+Section 6.6 of the paper: per-message wire framing, one-envelope versus
 m-envelope burst packaging, and the maximum-envelope-size probe.
 
 ## Layout

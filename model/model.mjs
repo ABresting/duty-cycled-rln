@@ -81,7 +81,7 @@ const split = B => {
 
 function envelopeBytes(scheme, B, payloadB) {
   const { m } = split(B);
-  const shared = scheme === 'routeA'
+  const shared = scheme === 'batch'
     ? C.perProofGroupB * m                              // one Groth16 proof + framing per group of k
     : C.foldProofBytes + 128;                           // one Spartan proof regardless of B + framing
   return B * payloadB + shared + B * C.perMsgInEnvB;
@@ -96,10 +96,10 @@ function burstLatencyMs(scheme, B, payloadB, p) {
   const env = envelopeBytes(scheme, B, payloadB);
   if (env > C.maxMsgBytes) return NaN; // exceeds TWN max message size
   const { k, m } = split(B);
-  const prove = scheme === 'routeA'
+  const prove = scheme === 'batch'
     ? m * proveBatchMs(p, k)
     : B * foldPerMsgMs(p);
-  const verify = scheme === 'routeA'
+  const verify = scheme === 'batch'
     ? m * (C.batchVerifyFit.v0 + C.batchVerifyFit.v1 * k) * verScale(p)
     : C.foldVerifyMs * verScale(p);
   return prove + C.hops * (ltMs(env) + verify);
@@ -136,7 +136,7 @@ const foldPerMsgMs = p => C.platforms[p].native?.foldPerMsg ?? C.foldProvePerMsg
 const maxBurstFold = p => Math.floor((C.gSeconds * 1000 - deliveryMs) / foldPerMsgMs(p));
 
 // ---------- sweeps ----------
-const SCHEMES = ['permsg', 'routeA', 'folded'];
+const SCHEMES = ['permsg', 'batch', 'folded'];
 const BS = [1, 2, 4, 8, 16, 32, 64];
 const PAYLOADS = [100, 1000];
 
@@ -150,9 +150,9 @@ for (const p of Object.keys(C.platforms))
       }
 out('burst-latency.csv', csv);
 
-csv = 'B,permsg_B,routeA_B,folded_B\n';
+csv = 'B,permsg_B,batch_B,folded_B\n';
 for (const B of BS.concat([128, 256]))
-  csv += `${B},${overheadPerMsgB('permsg', B).toFixed(0)},${overheadPerMsgB('routeA', B).toFixed(0)},${overheadPerMsgB('folded', B).toFixed(0)}\n`;
+  csv += `${B},${overheadPerMsgB('permsg', B).toFixed(0)},${overheadPerMsgB('batch', B).toFixed(0)},${overheadPerMsgB('folded', B).toFixed(0)}\n`;
 out('overhead.csv', csv);
 
 csv = 'sleep_s,omega,advantage_single_window,advantage_dual_window\n';
@@ -214,7 +214,7 @@ out('duty-cycle.svg', svgChart(
 // ---------- sanity asserts (fail loudly) ----------
 for (const p of Object.keys(C.platforms))
   for (const B of BS.filter(b => b >= 2))
-    if (!(burstLatencyMs('routeA', B, 100, p) < burstLatencyMs('permsg', B, 100, p)))
+    if (!(burstLatencyMs('batch', B, 100, p) < burstLatencyMs('permsg', B, 100, p)))
       throw new Error(`batching not winning at B=${B} on ${p}`);
 for (let i = 1; i < BS.length; i++)
   if (!(overheadPerMsgB('folded', BS[i]) < overheadPerMsgB('folded', BS[i - 1])))
@@ -225,14 +225,14 @@ if (!(BSTAR > 20 && BSTAR < 300)) throw new Error(`BSTAR out of expected range: 
 const f = (s, B, p) => burstLatencyMs(s, B, 100, p);
 console.log('=== model summary (100 B payloads, k=8 capacity) ===');
 console.log(`RPi4 gateway, B=8 burst:   per-msg ${(f('permsg', 8, 'RPi4') / 1000).toFixed(1)} s | ` +
-  `batched ${(f('routeA', 8, 'RPi4') / 1000).toFixed(1)} s | folded ${(f('folded', 8, 'RPi4') / 1000).toFixed(1)} s`);
+  `batched ${(f('batch', 8, 'RPi4') / 1000).toFixed(1)} s | folded ${(f('folded', 8, 'RPi4') / 1000).toFixed(1)} s`);
 console.log(`RPi4 gateway, B=64 burst:  per-msg ${(f('permsg', 64, 'RPi4') / 1000).toFixed(1)} s | ` +
-  `batched (m=8 proofs) ${(f('routeA', 64, 'RPi4') / 1000).toFixed(1)} s | folded ${(f('folded', 64, 'RPi4') / 1000).toFixed(1)} s`);
+  `batched (m=8 proofs) ${(f('batch', 64, 'RPi4') / 1000).toFixed(1)} s | folded ${(f('folded', 64, 'RPi4') / 1000).toFixed(1)} s`);
 console.log(`M1 gateway,   B=8 burst:   per-msg ${f('permsg', 8, 'M1').toFixed(0)} ms | ` +
-  `batched ${f('routeA', 8, 'M1').toFixed(0)} ms | folded ${f('folded', 8, 'M1').toFixed(0)} ms`);
-console.log(`overhead/msg at B=8: per-msg ${overheadPerMsgB('permsg', 8)} B | batched ${overheadPerMsgB('routeA', 8).toFixed(0)} B | folded ${overheadPerMsgB('folded', 8).toFixed(0)} B`);
+  `batched ${f('batch', 8, 'M1').toFixed(0)} ms | folded ${f('folded', 8, 'M1').toFixed(0)} ms`);
+console.log(`overhead/msg at B=8: per-msg ${overheadPerMsgB('permsg', 8)} B | batched ${overheadPerMsgB('batch', 8).toFixed(0)} B | folded ${overheadPerMsgB('folded', 8).toFixed(0)} B`);
 console.log(`folded-vs-permsg bandwidth crossover B* = ${BSTAR.toFixed(1)}  (the batched envelope is cheaper than both up to the envelope cap)`);
-console.log(`network bytes per B=8 burst (mesh x${meshEdges}): batched env ${(netBytes(envelopeBytes('routeA', 8, 100)) / 1e6).toFixed(1)} MB | ` +
+console.log(`network bytes per B=8 burst (mesh x${meshEdges}): batched env ${(netBytes(envelopeBytes('batch', 8, 100)) / 1e6).toFixed(1)} MB | ` +
   `folded env ${(netBytes(envelopeBytes('folded', 8, 100)) / 1e6).toFixed(1)} MB | ` +
   `8 separate msgs ${(netBytes(8 * (100 + C.perMsgOverheadB)) / 1e6).toFixed(1)} MB`);
 console.log(`Omega at S=1h: ${omega(3600)} (single window advantage) -> ~1 with dual window (+29-44% constraints)`);

@@ -51,20 +51,20 @@ fn v(n: u64) -> Vec<Fr> {
 fn group_inputs(k: u64, g: u64) -> Vec<(String, Vec<Fr>)> {
     let (pe, pi) = (vec![Fr::from(0u64); DEPTH], vec![Fr::from(0u64); DEPTH]);
     vec![
-        (s("identitySecret"), v(987654321)),
-        (s("userMessageLimit"), v(2048)), // ids reach B; keep the quota above them
-        (s("messageId"), (1..=k).map(|i| Fr::from(g * k + i)).collect()),
+        (s("a0"), v(987654321)),
+        (s("Qs"), v(2048)), // ids reach B; keep the quota above them
+        (s("j"), (1..=k).map(|i| Fr::from(g * k + i)).collect()),
         (s("pathElements"), pe),
         (s("identityPathIndex"), pi),
         (s("x"), (0..k).map(|i| Fr::from(1000 + g * k + i)).collect()),
-        (s("externalNullifier"), v(424242)),
-        (s("selectorUsed"), (0..k).map(|_| Fr::from(1u64)).collect()),
+        (s("e"), v(424242)),
+        (s("s"), (0..k).map(|_| Fr::from(1u64)).collect()),
     ]
 }
 
 fn bench(c: &mut Criterion) {
     for k in KS {
-        let tag = format!("our_ra_{k}");
+        let tag = format!("our_batch_{k}");
         if !std::path::Path::new(&format!("{ART}/{tag}/graph.bin")).exists() {
             continue;
         }

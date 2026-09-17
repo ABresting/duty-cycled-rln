@@ -65,10 +65,10 @@ run_sustained() {
     echo "wrote results/sustained-$1-$(hostname)-$DATE.csv"
 }
 run_sustained single 1 100
-run_sustained our_ra_8 8 64
-run_sustained our_ra_16 16 32
-run_sustained our_ra_32 32 16
-run_sustained our_ra_64 64 16
+run_sustained our_batch_8 8 64
+run_sustained our_batch_16 16 32
+run_sustained our_batch_32 32 16
+run_sustained our_batch_64 64 16
 
 echo "== bursts: k=8 and k=64 families (10 samples) =="
 (cd zerokit &&

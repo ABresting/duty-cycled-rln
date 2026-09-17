@@ -22,8 +22,11 @@ the benchmark pipeline that produced every number in the paper.
 | [microsoft/Nova](https://github.com/microsoft/Nova) | `666e3b25bfb9` | the folding prototype; clone into `folding/nova/` |
 | [vacp2p/circom-rln](https://github.com/vacp2p/circom-rln) | `94636847fab2` | circuit template tree for artifact rebuilds; clone into `circuits/circom-rln/` |
 | nwaku | v0.38.1 | the testbed cluster (`testbed/waku/node.sh` builds it from source) |
-| circom, circom-witnesscalc, ark-zkey | 2.1.x / see `build-artifacts.sh` header | artifact regeneration only |
-| Node.js | 18 or later | `model/model.mjs` and `circuits/gen-circuits.mjs` |
+| Node.js and npm | Node 18 or later | `model/model.mjs`, `circuits/gen-circuits.mjs`, and `npm install` inside `circuits/circom-rln/` (pulls circomlib and snarkjs 0.7 for the artifact build) |
+| [circom](https://github.com/iden3/circom) | 2.1.0 | compiling the circuits (artifact build) |
+| [iden3/circom-witnesscalc](https://github.com/iden3/circom-witnesscalc) | `build-circuit/v0.1.1` | witness graphs (`graph.bin`) for zerokit (artifact build) |
+| [seemenkina/ark-zkey](https://github.com/seemenkina/ark-zkey) | `029bfe8` | converting snarkjs zkeys to zerokit's arkzkey format (artifact build) |
+| powers of tau | BN254, size 2^17 | Groth16 setup for the artifact build; see below |
 | Python 3 | 3.9 or later | result collection and testbed experiments |
 
 ## Running the benchmarks
@@ -41,9 +44,11 @@ bash bench-kit/setup.sh
 nohup bash bench-kit/run-benchmarks.sh > campaign.log 2>&1 &
 ```
 
-Run the setup once and wait for `KIT READY` before launching anything else;
-the pipeline stages run strictly in sequence and each writes its CSV into
-`zerokit-bench/results/` before the next begins.
+Run the setup once and wait for `KIT READY`. Before launching the pipeline,
+build the proving artifacts as described under *Proving artifacts* below: the
+benches load them from `zerokit-bench/artifacts/` and skip any circuit whose
+artifacts are missing. The pipeline stages then run strictly in sequence and
+each writes its CSV into `zerokit-bench/results/` before the next begins.
 
 ## Repository map
 
@@ -79,7 +84,7 @@ verbatim so every CSV matches the code that produced it:
 | Identifier | Meaning in the paper |
 |---|---|
 | `single` | the deployed single-message RLN circuit |
-| `our_routeA_k` / artifact tag `our_ra_k` | the batched circuit at capacity k |
+| `our_batch_k` | the batched circuit at capacity k |
 | `our_dualwindow_k` / `our_dw_k` | batched + dual-window quotas |
 | `our_typed_k`, `our_typed_dw_k` | batched + typed quotas (+ dual-window) |
 | `their_multiburn_k` | the shipped multi-message-identifier extension (baseline) |
@@ -89,13 +94,36 @@ verbatim so every CSV matches the code that produced it:
 
 ## Proving artifacts
 
-The compiled artifacts (~1.2 GB: witness graphs and arkzkey files for 22
-circuit variants) are not stored in git. Either download them from this
-repository's release assets and unpack into `zerokit-bench/artifacts/`, or
-rebuild them with `zerokit-bench/build-artifacts.sh` (requires circom 2.1,
-vacp2p/circom-witnesscalc, and ark-zkey; see the script header). The trusted
-setup used for benchmarking is a local development ceremony; it affects no
-reported ratio.
+The compiled artifacts (about 1.2 GB: witness graphs and arkzkey files for 22
+circuit variants) are not stored in git; `zerokit-bench/build-artifacts.sh`
+rebuilds them. It expects the following layout, all of it git-ignored:
+
+```sh
+# 1. circuit template tree, with our circuits copied into it
+git clone https://github.com/vacp2p/circom-rln circuits/circom-rln
+git -C circuits/circom-rln checkout 94636847fab2
+(cd circuits/circom-rln && npm install)          # circomlib + snarkjs
+cp circuits/*.circom circuits/circom-rln/circuits/
+
+# 2. tools, at the paths the script looks for (or export CIRCOM, WC, AZ to point elsewhere)
+mkdir -p zerokit-bench/tools
+#    circom 2.1.0 binary            -> zerokit-bench/tools/circom210
+#    circom-witnesscalc, tag build-circuit/v0.1.1, `cargo build --release`
+#                                   -> zerokit-bench/tools/circom-witnesscalc/
+#    ark-zkey, commit 029bfe8, `cargo build --release`
+#                                   -> zerokit-bench/tools/ark-zkey/
+
+# 3. a BN254 powers-of-tau file of size 2^17 (the k=64 dual-window circuits
+#    have 73,000-74,000 constraints, above the 2^16 limit), for example
+#    generated with `snarkjs powersoftau`, placed at
+#    circuits/circom-rln/build/pot17.ptau (or export PTAU_OVERRIDE=/path/to/file)
+
+bash zerokit-bench/build-artifacts.sh            # all 22 tags; or list tags to build a subset
+```
+
+The script checks the prerequisites and stops at the first missing one. Each
+tag takes from seconds (k=4) to a few minutes (k=64) on a workstation. The
+trusted setup is a local development ceremony; it affects no reported ratio.
 
 ## License
 

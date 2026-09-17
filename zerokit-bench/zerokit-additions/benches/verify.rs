@@ -56,16 +56,17 @@ fn single_inputs() -> Vec<(String, Vec<Fr>)> {
     ]
 }
 
+// our_batch_k: field names follow the paper's notation (a0, Qs, e, j, s; Section 5.1).
 fn batch_inputs(k: u64) -> Vec<(String, Vec<Fr>)> {
     let (pe, pi) = path();
     vec![
-        (s("identitySecret"), v(987654321)),
-        (s("userMessageLimit"), v(100)),
+        (s("a0"), v(987654321)),
+        (s("Qs"), v(100)),
         (s("pathElements"), pe),
         (s("identityPathIndex"), pi),
-        (s("externalNullifier"), v(424242)),
-        (s("messageId"), (1..=k).map(Fr::from).collect()),
-        (s("selectorUsed"), (0..k).map(|_| Fr::from(1u64)).collect()),
+        (s("e"), v(424242)),
+        (s("j"), (1..=k).map(Fr::from).collect()),
+        (s("s"), (0..k).map(|_| Fr::from(1u64)).collect()),
         (s("x"), (0..k).map(|i| Fr::from(1000 + i)).collect()),
     ]
 }
@@ -84,10 +85,10 @@ fn bench(c: &mut Criterion) {
     }
     for k in [4u64, 8, 16, 32, 64] {
         let name = format!("verify_k{k}");
-        if !selected(&name) || !std::path::Path::new(&format!("{ART}/our_ra_{k}/graph.bin")).exists() {
+        if !selected(&name) || !std::path::Path::new(&format!("{ART}/our_batch_{k}/graph.bin")).exists() {
             continue;
         }
-        let (g, z) = load(&format!("our_ra_{k}"));
+        let (g, z) = load(&format!("our_batch_{k}"));
         let (proof, publics) = prove_with_publics_from_named_inputs(batch_inputs(k), &g, &z);
         let mut bytes = Vec::new();
         proof.serialize_with_mode(&mut bytes, Compress::Yes).unwrap();

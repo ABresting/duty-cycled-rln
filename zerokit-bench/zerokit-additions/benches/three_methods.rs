@@ -2,13 +2,13 @@
 // at N=4 and N=8. Apples-to-apples: same engine, same tool, same tree depth 20.
 //   (1) single            — one message per proof (existing baseline; N msgs => N proofs)
 //   (2) their_multiburn_N — shipped multi_message_id, single x, k message_ids (existing)
-//   (3) our_routeA_N      — batching: distinct x_i per message + monotonic dedup   (OURS)
+//   (3) our_batch_N       — batching: distinct x_i per message + monotonic dedup   (OURS)
 //   (dual-window / typed variants live in benches/variants.rs — separate runs)
 //
 // == RUNNING A SUBSET (criterion name filter — substring match on case names) ==
 //   cargo bench -p rln --bench three_methods                      # ALL cases
 //   cargo bench -p rln --bench three_methods -- our_typed         # both typed + typed_dw, N=4+8
-//   cargo bench -p rln --bench three_methods -- our_routeA_8      # exactly one case
+//   cargo bench -p rln --bench three_methods -- our_batch_8       # exactly one case
 //   cargo bench -p rln --bench three_methods -- _8                # every N=8 case
 //   cargo bench -p rln --bench three_methods -- single            # just the baseline
 // Sample count: see cfg() at the bottom (currently 20 timed proofs per case + ~1.5s warmup).
@@ -45,8 +45,9 @@ fn path() -> (Vec<Fr>, Vec<Fr>) {
     (vec![Fr::from(0u64); DEPTH], vec![Fr::from(0u64); DEPTH])
 }
 
-// common fields shared by all circuits
-fn base_inputs() -> Vec<(String, Vec<Fr>)> {
+// common fields for the deployed circuits (single, their_multiburn): field names are
+// fixed by zerokit/circom-rln upstream, not ours to rename.
+fn base_inputs_deployed() -> Vec<(String, Vec<Fr>)> {
     let (pe, pi) = path();
     vec![
         (s("identitySecret"), v(987654321)),
@@ -57,36 +58,53 @@ fn base_inputs() -> Vec<(String, Vec<Fr>)> {
     ]
 }
 
+// common fields for our circuits: field names follow the paper's notation
+// (a0 = identity secret, Qs = short-window quota, e = external nullifier; Section 5.1).
+fn base_inputs_ours() -> Vec<(String, Vec<Fr>)> {
+    let (pe, pi) = path();
+    vec![
+        (s("a0"), v(987654321)),
+        (s("Qs"), v(100)),
+        (s("pathElements"), pe),
+        (s("identityPathIndex"), pi),
+        (s("e"), v(424242)),
+    ]
+}
+
 // single-message circuit inputs (scalar messageId + scalar x, no selectorUsed)
 fn single_inputs() -> Vec<(String, Vec<Fr>)> {
-    let mut inp = base_inputs();
+    let mut inp = base_inputs_deployed();
     inp.push((s("messageId"), v(1)));
     inp.push((s("x"), v(1000)));
     inp
 }
 
-// multi circuits: N message_ids + selectorUsed. `x_array` = true => distinct x_i (ours),
-// false => single shared x (their multi-burn).
+// multi circuits: N slot indices + selectors. `x_array` = true => distinct x_i, our
+// batch circuit (paper notation: j, s); false => single shared x, their multi-burn
+// (deployed field names: messageId, selectorUsed).
 fn multi_inputs(n: u64, x_array: bool) -> Vec<(String, Vec<Fr>)> {
-    let mut inp = base_inputs();
-    inp.push((s("messageId"), (1..=n).map(Fr::from).collect()));
-    inp.push((s("selectorUsed"), (0..n).map(|_| Fr::from(1u64)).collect()));
     if x_array {
+        let mut inp = base_inputs_ours();
+        inp.push((s("j"), (1..=n).map(Fr::from).collect()));
+        inp.push((s("s"), (0..n).map(|_| Fr::from(1u64)).collect()));
         inp.push((s("x"), (0..n).map(|i| Fr::from(1000 + i)).collect()));
+        inp
     } else {
+        let mut inp = base_inputs_deployed();
+        inp.push((s("messageId"), (1..=n).map(Fr::from).collect()));
+        inp.push((s("selectorUsed"), (0..n).map(|_| Fr::from(1u64)).collect()));
         inp.push((s("x"), v(1000)));
+        inp
     }
-    inp
 }
 
-
-// partial occupancy: only the first p of n slots active (selector 0 for the rest).
-// The monotonic chain is unconditional, so messageId stays strictly increasing
-// across all slots; range checks apply to active slots only.
+// partial occupancy (our batch circuit only): only the first p of n slots active
+// (selector 0 for the rest). The monotonic chain is unconditional, so j stays
+// strictly increasing across all slots; range checks apply to active slots only.
 fn multi_inputs_partial(n: u64, p: u64) -> Vec<(String, Vec<Fr>)> {
-    let mut inp = base_inputs();
-    inp.push((s("messageId"), (1..=n).map(Fr::from).collect()));
-    inp.push((s("selectorUsed"), (0..n).map(|i| Fr::from(u64::from(i < p))).collect()));
+    let mut inp = base_inputs_ours();
+    inp.push((s("j"), (1..=n).map(Fr::from).collect()));
+    inp.push((s("s"), (0..n).map(|i| Fr::from(u64::from(i < p))).collect()));
     inp.push((s("x"), (0..n).map(|i| Fr::from(1000 + i)).collect()));
     inp
 }
@@ -133,9 +151,9 @@ fn bench(c: &mut Criterion) {
 
     // (3) batched circuit (distinct x_i per message) — uniform loop over capacities
     for n in [4u64, 8, 16, 32, 64] {
-        let name = format!("our_routeA_{n}");
-        if selected(&name) && have(&format!("our_ra_{n}")) {
-            let (g, z) = load(&format!("our_ra_{n}"));
+        let name = format!("our_batch_{n}");
+        if selected(&name) && have(&format!("our_batch_{n}")) {
+            let (g, z) = load(&format!("our_batch_{n}"));
             let inp = multi_inputs(n, true);
             c.bench_function(&name, move |b| {
                 b.iter(|| prove_from_named_inputs(inp.clone(), &g, &z))
@@ -147,8 +165,8 @@ fn bench(c: &mut Criterion) {
     // these cases confirm that the ceil(B/k) model holds for non-multiple bursts.
     for (n, p) in [(8u64, 3u64), (64, 5), (64, 32)] {
         let name = format!("our_partial_{p}of{n}");
-        if selected(&name) && have(&format!("our_ra_{n}")) {
-            let (g, z) = load(&format!("our_ra_{n}"));
+        if selected(&name) && have(&format!("our_batch_{n}")) {
+            let (g, z) = load(&format!("our_batch_{n}"));
             let inp = multi_inputs_partial(n, p);
             c.bench_function(&name, move |b| {
                 b.iter(|| prove_from_named_inputs(inp.clone(), &g, &z))

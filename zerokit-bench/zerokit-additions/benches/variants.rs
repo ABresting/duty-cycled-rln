@@ -49,47 +49,50 @@ fn path() -> (Vec<Fr>, Vec<Fr>) {
     (vec![Fr::from(0u64); DEPTH], vec![Fr::from(0u64); DEPTH])
 }
 
-// dual-window inputs: batch (distinct x_i) + a long window (extra messageIdLong array,
-// userMessageLimitLong, externalNullifierLong). Long window shared across the batch.
+// dual-window inputs: batch (distinct x_i) + a long window (extra jLong array,
+// Ql, eLong). Long window shared across the batch. Field names follow the
+// paper's notation: a0, Qs/Ql, j/jLong, e/eLong, s (Section 5.2).
 fn dw_inputs(k: u64) -> Vec<(String, Vec<Fr>)> {
     let (pe, pi) = path();
     vec![
-        (s("identitySecret"), v(987654321)),
-        (s("userMessageLimit"), v(100)),
-        (s("userMessageLimitLong"), v(100)),
-        (s("messageId"), (1..=k).map(Fr::from).collect()),
-        (s("messageIdLong"), (1..=k).map(Fr::from).collect()),
+        (s("a0"), v(987654321)),
+        (s("Qs"), v(100)),
+        (s("Ql"), v(100)),
+        (s("j"), (1..=k).map(Fr::from).collect()),
+        (s("jLong"), (1..=k).map(Fr::from).collect()),
         (s("pathElements"), pe),
         (s("identityPathIndex"), pi),
         (s("x"), (0..k).map(|i| Fr::from(1000 + i)).collect()),
-        (s("externalNullifier"), v(424242)),
-        (s("externalNullifierLong"), v(777)),
-        (s("selectorUsed"), (0..k).map(|_| Fr::from(1u64)).collect()),
+        (s("e"), v(424242)),
+        (s("eLong"), v(777)),
+        (s("s"), (0..k).map(|_| Fr::from(1u64)).collect()),
     ]
 }
 
 // typed-quotas inputs: mixed-class batch, slots sorted by (class, id). Three classes:
 // bulk readings (class 0, budget 100), events (class 1, budget 20), alarm (class 2, budget 5).
+// Field names follow the paper's notation: a0, c (class label), Qc (per-class quota),
+// j, e (Section 5.3).
 fn typed_inputs(k: u64, dw: bool) -> Vec<(String, Vec<Fr>)> {
     let (pe, pi) = path();
     let class_of = |i: u64| if i < k / 2 { 0u64 } else if i < k - 1 { 1 } else { 2 };
     let ids: Vec<u64> = (0..k).map(|i| (i % (k / 2).max(1)) + 1).collect();
     let mut inp = vec![
-        (s("identitySecret"), v(987654321)),
+        (s("a0"), v(987654321)),
         (s("rateCommitmentLimits"), v(111222333)),
-        (s("classId"), (0..k).map(|i| Fr::from(class_of(i))).collect()),
-        (s("classLimit"), (0..k).map(|i| Fr::from([100u64, 20, 5][class_of(i) as usize])).collect()),
-        (s("messageId"), ids.iter().map(|&i| Fr::from(i)).collect()),
+        (s("c"), (0..k).map(|i| Fr::from(class_of(i))).collect()),
+        (s("Qc"), (0..k).map(|i| Fr::from([100u64, 20, 5][class_of(i) as usize])).collect()),
+        (s("j"), ids.iter().map(|&i| Fr::from(i)).collect()),
         (s("pathElements"), pe),
         (s("identityPathIndex"), pi),
         (s("x"), (0..k).map(|i| Fr::from(1000 + i)).collect()),
-        (s("extNull"), (0..k).map(|i| Fr::from(424242 + class_of(i))).collect()),
-        (s("selectorUsed"), (0..k).map(|_| Fr::from(1u64)).collect()),
+        (s("e"), (0..k).map(|i| Fr::from(424242 + class_of(i))).collect()),
+        (s("s"), (0..k).map(|_| Fr::from(1u64)).collect()),
     ];
     if dw {
-        inp.push((s("messageIdLong"), ids.iter().map(|&i| Fr::from(i)).collect()));
-        inp.push((s("classLimitLong"), (0..k).map(|i| Fr::from([1000u64, 100, 10][class_of(i) as usize])).collect()));
-        inp.push((s("extNullLong"), (0..k).map(|i| Fr::from(777000 + class_of(i))).collect()));
+        inp.push((s("jLong"), ids.iter().map(|&i| Fr::from(i)).collect()));
+        inp.push((s("QcLong"), (0..k).map(|i| Fr::from([1000u64, 100, 10][class_of(i) as usize])).collect()));
+        inp.push((s("eLong"), (0..k).map(|i| Fr::from(777000 + class_of(i))).collect()));
     }
     inp
 }

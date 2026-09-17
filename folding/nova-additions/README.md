@@ -5,7 +5,7 @@ each folding step runs the batched RLN relation (per-message Shamir share and
 nullifier, accumulated through a Poseidon sponge) over K messages, and a final
 Spartan compression yields one proof of roughly 12 KB whose verification cost
 is independent of the burst length. Section 5.4 of the paper specifies the
-construction; Section 7.3 reports the measurements.
+construction; Section 6.5 reports the measurements.
 
 ## Building
 
