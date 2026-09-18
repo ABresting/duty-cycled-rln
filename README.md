@@ -55,9 +55,9 @@ each writes its CSV into `zerokit-bench/results/` before the next begins.
 | Directory | Contents |
 |---|---|
 | `circuits/` | The circom sources: batched (`gen_monotonic_*`), dual-window (`*_dw_*`), typed (`gen_typed_*`) circuits and their generator (`gen-circuits.mjs`) |
-| `zerokit-bench/zerokit-additions/` | Benchmark harnesses (criterion), the sustained-proving example, and the patch applied to zerokit at the pinned commit (`BASE-COMMIT.txt`) |
+| `zerokit-bench/zerokit-additions/` | Benchmark harnesses (criterion), the sustained-proving and envelope examples, and the patch applied to zerokit at the pinned commit (`BASE-COMMIT.txt`) |
 | `zerokit-bench/build-artifacts.sh` | Rebuilds the proving artifacts (r1cs, witness graph, arkzkey) for every circuit |
-| `bench-kit/` | Turns a fresh Linux or macOS machine into a benchmark runner: one setup script, one pipeline script |
+| `bench-kit/` | Turns a fresh Linux or macOS machine into a benchmark runner: one setup script, one pipeline script, and the envelope demonstration |
 | `folding/` | The Nova folding prototype (`nova-additions/rln_fold.rs`, built against microsoft/Nova at the commit given there) and its sweep script |
 | `testbed/` | The 5-node local nwaku cluster (`waku/node.sh`) and the transport experiments: burst packaging (`experiments/packaging.py`) and the maximum-envelope-size probe (`experiments/envelope_probe.py`) |
 | `model/` | The analytical model (`model.mjs`, zero dependencies) that generates the paper's feasibility table from the measured constants |
@@ -75,6 +75,30 @@ each writes its CSV into `zerokit-bench/results/` before the next begins.
 
 Every benchmark stage writes a CSV with the host, CPU, sample count, and date
 in its header, directly comparable to the tables in the paper.
+
+## Building and validating an envelope
+
+The benchmarks measure proof generation and verification separately. The
+`envelope` example connects the two: it builds a real batch envelope as a gateway would and
+validates it as a relayer would, checking freshness first, recomputing every
+message hash from the delivered payloads, verifying every proof, and consulting
+the nullifier log. One script runs it on five cases in a few seconds (after
+`setup.sh`; needs only the `our_batch_8` artifacts):
+
+```sh
+bash bench-kit/run-envelope-demo.sh
+```
+
+| Case | Outcome |
+|---|---|
+| honest burst of 32 messages | accepted, 32 of 32 |
+| one proof corrupted | rejected as a whole, 0 of 32 |
+| one payload altered after proving | rejected as a whole, since the proofs bind the hash of every payload |
+| two envelopes spending the same quota slots | the second is rejected, and its shares reveal the member's identity secret |
+| stale envelope | rejected before any proof is checked |
+
+The example validates locally. In a deployment the same checks run in the
+relayer's GossipSub topic validator, so a rejected envelope is never forwarded.
 
 ## Identifier glossary
 
